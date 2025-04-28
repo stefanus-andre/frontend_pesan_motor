@@ -5,38 +5,59 @@ import { Button } from "@/components/ui/button";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
+// Interface for the API response
+interface LoginResponse {
+    token: string;
+    user: {
+        id: number;
+        name: string;
+        email: string;
+        role: string;
+    };
+}
+
 export default function Login() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
     const navigate = useNavigate();
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
+        setIsLoading(true);
 
         try {
-            const response = await axios.post("http://localhost:8080/login", {
-                email,
-                password,
-            });
+            const response = await axios.post<LoginResponse>(
+                "http://localhost:8080/login",
+                {
+                    email,
+                    password,
+                }
+            );
 
-            const { token, role } = response.data;
+            const { token, user } = response.data;
 
-            // Save token and role in localStorage
+            // Store authentication data
             localStorage.setItem("token", token);
-            localStorage.setItem("role", role);
+            localStorage.setItem("user", JSON.stringify(user));
 
-            // Redirect based on user role
-            if (role === "admin") {
-                navigate("/dashboard");
-            } else if (role === "user") {
-                navigate("/user_dashboard");
-            } else {
-                // Fallback for any other role
-                navigate("/");
+            // Redirect based on role
+            switch (user.role) {
+                case "admin":
+                    navigate("/dashboard");
+                    break;
+                case "user":
+                    navigate("/user_dashboard");
+                    break;
+                default:
+                    navigate("/");
             }
+
         } catch (error: any) {
             console.error("Login failed:", error.response?.data?.error || error.message);
-            alert(error.response?.data?.error || "Login gagal");
+            alert(error.response?.data?.error || "Login failed. Please try again.");
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -54,6 +75,7 @@ export default function Login() {
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             required
+                            autoComplete="username"
                         />
                         <Input
                             type="password"
@@ -61,9 +83,10 @@ export default function Login() {
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
+                            autoComplete="current-password"
                         />
-                        <Button type="submit" className="w-full">
-                            Login
+                        <Button type="submit" className="w-full" disabled={isLoading}>
+                            {isLoading ? "Logging in..." : "Login"}
                         </Button>
                     </form>
                 </CardContent>

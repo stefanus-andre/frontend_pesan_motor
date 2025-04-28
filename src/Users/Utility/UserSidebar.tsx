@@ -24,7 +24,10 @@ export default function UserSidebar() {
                     Authorization: `Bearer ${localStorage.getItem("token")}`
                 }
             });
+
+            // Remove both token and userId on logout
             localStorage.removeItem("token");
+            localStorage.removeItem("userId");
             navigate("/", { replace: true }); // Redirect after logout
         } catch (error) {
             console.error("Logout failed:", error);

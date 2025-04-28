@@ -2,6 +2,21 @@ import { useState, useEffect } from "react";
 import UserSidebar from "@/Users/Utility/UserSidebar.tsx";
 import axios from "axios";
 
+interface ApiMotorcycle {
+    ID: number;
+    CreatedAt: string;
+    UpdatedAt: string;
+    DeletedAt: string | null;
+    nama_motor: string;
+    jenis_motor: string;
+    nomor_plat_motor: string;
+    qty_motor: number;
+    harga_sewa_motor: number;
+    tanggal_pinjam: string;
+    tanggal_kembali: string;
+    image_motor: string;
+}
+
 interface Motorcycle {
     id: number;
     name: string;
@@ -11,8 +26,26 @@ interface Motorcycle {
     description: string;
 }
 
+interface BookingResponse {
+    data: {
+        ID: number;
+        motorcycle_id: number;
+        tanggal_pinjam: string;
+        tanggal_kembali: string;
+        total_harga_sewa: number;
+    };
+    durasi_sewa: number;
+    message: string;
+    total_harga: number;
+}
+
+interface Notification {
+    type: 'success' | 'error' | 'info';
+    message: string;
+    details?: React.ReactNode;
+}
+
 export default function PesanMotor() {
-    // Initialize motorcycles as an empty array to avoid the .map error
     const [motorcycles, setMotorcycles] = useState<Motorcycle[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -24,34 +57,62 @@ export default function PesanMotor() {
     });
     const [successMessage, setSuccessMessage] = useState("");
     const [bookingSummary, setBookingSummary] = useState<any>(null);
+    const [showModal, setShowModal] = useState(false);
+    const [notification, setNotification] = useState<Notification | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
-        // Fetch motorcycle data when component mounts
         fetchMotorcycles();
     }, []);
+
+    // Auto hide notification after 5 seconds
+    useEffect(() => {
+        if (notification) {
+            const timer = setTimeout(() => {
+                setNotification(null);
+            }, 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [notification]);
+
+    const showNotification = (type: 'success' | 'error' | 'info', message: string, details?: React.ReactNode) => {
+        setNotification({ type, message, details });
+    };
 
     const fetchMotorcycles = async () => {
         try {
             setLoading(true);
-            // Adjust the URL to match your API endpoint
-            const response = await axios.get("/get-all-data-motorcycle");
+            const token = localStorage.getItem("token");
 
-            // Add console logging to see the structure of the response
-            console.log("API Response:", response);
+            const response = await axios.get(
+                "http://localhost:8080/user/motorcycles",
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                }
+            );
 
-            // Check if response.data is an array or access the correct property
-            // If response.data itself is not an array but contains a property with the array:
-            const motorcycleData = Array.isArray(response.data)
-                ? response.data
-                : response.data.data || response.data.motorcycles || [];
-
-            console.log("Motorcycle Data:", motorcycleData);
+            const rawData = response.data["data semua motorcycles"] || [];
+            const motorcycleData = rawData.map((motor: ApiMotorcycle) => ({
+                id: motor.ID,
+                name: motor.nama_motor,
+                platNumber: motor.nomor_plat_motor,
+                hargaSewaMotor: motor.harga_sewa_motor,
+                imageUrl: motor.image_motor,
+                description: motor.jenis_motor
+            }));
 
             setMotorcycles(motorcycleData);
             setLoading(false);
-        } catch (err) {
-            console.error("Error fetching motorcycles:", err);
-            setError("Failed to load motorcycles");
+        } catch (err: any) {
+            if (err.response?.status === 401) {
+                showNotification('error', "Session expired. Please login again.");
+                localStorage.removeItem("token");
+                window.location.href = "/login";
+            } else {
+                showNotification('error', "Failed to load motorcycles. Please try again later.");
+            }
             setLoading(false);
         }
     };
@@ -72,54 +133,122 @@ export default function PesanMotor() {
         });
     };
 
-    const calculateDays = () => {
-        if (!formData.tanggalPinjam || !formData.tanggalKembali) return 0;
-
-        const startDate = new Date(formData.tanggalPinjam);
-        const endDate = new Date(formData.tanggalKembali);
-        const diffTime = endDate.getTime() - startDate.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays > 0 ? diffDays : 0;
-    };
-
-    const calculateTotal = () => {
-        if (!selectedMotorcycle) return 0;
-        const days = calculateDays();
-        return days * selectedMotorcycle.hargaSewaMotor;
+    const formatDate = (dateString: string) => {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('id-ID', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
         if (!selectedMotorcycle) {
-            setError("Please select a motorcycle");
+            showNotification('error', "Silakan pilih motor terlebih dahulu");
             return;
         }
 
         try {
-            // Get user ID from local storage or context
-            const userId = localStorage.getItem("userId") || 1; // Default for testing
+            const token = localStorage.getItem("token");
+            if (!token) {
+                showNotification('error', "Anda perlu login terlebih dahulu");
+                window.location.href = "/login";
+                return;
+            }
 
-            const bookingData = {
-                user_id: Number(userId),
-                motorcycle_id: formData.motorcycleId,
-                tanggal_pinjam: formData.tanggalPinjam,
-                tanggal_kembali: formData.tanggalKembali,
-            };
+            const userData = localStorage.getItem("user");
+            if (!userData) {
+                showNotification('error', "Data pengguna tidak ditemukan. Silakan login kembali.");
+                window.location.href = "/login";
+                return;
+            }
 
-            const response = await axios.post("/api/pesan_motor", bookingData);
-            setSuccessMessage("Booking successful!");
-            setBookingSummary(response.data);
+            // Display info notification that order is being processed
+            showNotification('info', "Sedang memproses pesanan Anda...");
+            setIsSubmitting(true);
 
-            // Reset form
-            setFormData({
-                motorcycleId: 0,
-                tanggalPinjam: "",
-                tanggalKembali: "",
-            });
-            setSelectedMotorcycle(null);
+            const response = await axios.post<BookingResponse>(
+                "http://localhost:8080/user/bookings",
+                {
+                    motorcycle_id: selectedMotorcycle.id,
+                    tanggal_pinjam: formData.tanggalPinjam,
+                    tanggal_kembali: formData.tanggalKembali,
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json"
+                    }
+                }
+            );
+
+            setIsSubmitting(false);
+
+            if (response.data) {
+                const bookingData = response.data;
+
+                // Create detailed success notification
+                const notificationDetails = (
+                    <div className="mt-2 text-sm">
+                        <div className="flex justify-between border-b pb-1 mb-1">
+                            <span className="font-medium">ID Pesanan:</span>
+                            <span>{bookingData.data.ID}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1 mb-1">
+                            <span className="font-medium">Durasi Sewa:</span>
+                            <span>{bookingData.durasi_sewa} hari</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1 mb-1">
+                            <span className="font-medium">Tanggal Pinjam:</span>
+                            <span>{formatDate(bookingData.data.tanggal_pinjam)}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1 mb-1">
+                            <span className="font-medium">Tanggal Kembali:</span>
+                            <span>{formatDate(bookingData.data.tanggal_kembali)}</span>
+                        </div>
+                        <div className="flex justify-between font-medium text-green-700">
+                            <span>Total Biaya:</span>
+                            <span>Rp {bookingData.total_harga.toLocaleString()}</span>
+                        </div>
+                    </div>
+                );
+
+                // Show success notification with details
+                showNotification(
+                    'success',
+                    "Motor berhasil dipesan!",
+                    notificationDetails
+                );
+
+                setSuccessMessage(bookingData.message);
+                setBookingSummary({
+                    durasi_sewa: bookingData.durasi_sewa,
+                    total_harga: bookingData.total_harga,
+                });
+                setShowModal(true);
+
+                // Reset form
+                setSelectedMotorcycle(null);
+                setFormData({
+                    motorcycleId: 0,
+                    tanggalPinjam: "",
+                    tanggalKembali: "",
+                });
+            }
+
         } catch (err: any) {
-            setError(err.response?.data?.error || "Failed to book motorcycle");
+            setIsSubmitting(false);
+            if (err.response?.status === 401) {
+                showNotification('error', "Session expired. Please login again.");
+                localStorage.removeItem("token");
+                localStorage.removeItem("user");
+                window.location.href = "/login";
+            } else {
+                const errorMessage = err.response?.data?.error || "Gagal membuat pesanan. Silakan coba lagi nanti.";
+                showNotification('error', errorMessage);
+            }
         }
     };
 
@@ -128,36 +257,67 @@ export default function PesanMotor() {
     return (
         <div className="flex">
             <UserSidebar />
-            <div className="flex-1 p-6">
+            <div className="flex-1 p-6 relative">
+                {/* Toast Notification */}
+                {notification && (
+                    <div className="fixed top-4 right-4 max-w-md z-50 animate-slide-in">
+                        <div className={`rounded-lg shadow-lg p-4 ${
+                            notification.type === 'success' ? 'bg-green-50 border-l-4 border-green-500' :
+                                notification.type === 'error' ? 'bg-red-50 border-l-4 border-red-500' :
+                                    'bg-blue-50 border-l-4 border-blue-500'
+                        }`}>
+                            <div className="flex items-center">
+                                {notification.type === 'success' ? (
+                                    <svg className="h-6 w-6 text-green-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                ) : notification.type === 'error' ? (
+                                    <svg className="h-6 w-6 text-red-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                ) : (
+                                    <svg className="h-6 w-6 text-blue-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                )}
+                                <p className={`text-sm font-medium ${
+                                    notification.type === 'success' ? 'text-green-700' :
+                                        notification.type === 'error' ? 'text-red-700' :
+                                            'text-blue-700'
+                                }`}>
+                                    {notification.message}
+                                </p>
+                                <button
+                                    onClick={() => setNotification(null)}
+                                    className="ml-auto text-gray-400 hover:text-gray-600"
+                                >
+                                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            {notification.details && (
+                                <div className="mt-2">
+                                    {notification.details}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <h2 className="text-2xl font-bold mb-6">Pesan Motor</h2>
 
-                {error && (
-                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-                        {error}
-                    </div>
-                )}
-
-                {successMessage && (
-                    <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
-                        {successMessage}
-                        {bookingSummary && (
-                            <div className="mt-2">
-                                <p>Durasi sewa: {bookingSummary.durasi_sewa} hari</p>
-                                <p>Total harga: Rp {bookingSummary.total_harga.toLocaleString()}</p>
-                            </div>
-                        )}
-                    </div>
-                )}
-
                 <div className="grid md:grid-cols-2 gap-6">
-                    {/* Motorcycle Selection Section */}
+                    {/* Motorcycle Selection */}
                     <div>
                         <h3 className="text-lg font-semibold mb-4">Pilih Motor</h3>
                         {loading ? (
-                            <p>Loading motorcycles...</p>
+                            <div className="flex justify-center items-center h-40">
+                                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                            </div>
                         ) : motorcycles.length > 0 ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {/* Safely use map only if motorcycles is an array */}
                                 {motorcycles.map((motor) => (
                                     <div
                                         key={motor.id}
@@ -184,15 +344,24 @@ export default function PesanMotor() {
                                         <h4 className="font-medium">{motor.name}</h4>
                                         <p className="text-sm text-gray-500">{motor.platNumber}</p>
                                         <p className="text-sm mt-1">Rp {motor.hargaSewaMotor.toLocaleString()}/hari</p>
+                                        <p className="text-xs text-gray-500 mt-1">{motor.description}</p>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <p>No motorcycles available.</p>
+                            <div className="bg-gray-100 p-4 rounded-lg text-center">
+                                <p>Tidak ada motor yang tersedia saat ini.</p>
+                                <button
+                                    onClick={fetchMotorcycles}
+                                    className="mt-2 text-blue-600 hover:text-blue-800"
+                                >
+                                    Coba Muat Ulang
+                                </button>
+                            </div>
                         )}
                     </div>
 
-                    {/* Booking Form Section */}
+                    {/* Booking Form */}
                     <div>
                         <h3 className="text-lg font-semibold mb-4">Form Pemesanan</h3>
                         <form onSubmit={handleSubmit} className="space-y-4">
@@ -238,28 +407,50 @@ export default function PesanMotor() {
                                 />
                             </div>
 
-                            {selectedMotorcycle && formData.tanggalPinjam && formData.tanggalKembali && (
-                                <div className="p-4 bg-gray-50 rounded border">
-                                    <h4 className="font-medium mb-2">Ringkasan Pesanan</h4>
-                                    <div className="space-y-1">
-                                        <p>Durasi: {calculateDays()} hari</p>
-                                        <p>Harga per hari: Rp {selectedMotorcycle.hargaSewaMotor.toLocaleString()}</p>
-                                        <p className="font-bold">Total: Rp {calculateTotal().toLocaleString()}</p>
-                                    </div>
-                                </div>
-                            )}
-
                             <button
                                 type="submit"
-                                className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400"
-                                disabled={!selectedMotorcycle || !formData.tanggalPinjam || !formData.tanggalKembali}
+                                disabled={isSubmitting}
+                                className={`w-full p-2 rounded transition ${
+                                    isSubmitting
+                                        ? "bg-gray-400 cursor-not-allowed"
+                                        : "bg-blue-500 hover:bg-blue-600 text-white"
+                                }`}
                             >
-                                Pesan Sekarang
+                                {isSubmitting ? (
+                                    <div className="flex items-center justify-center">
+                                        <svg className="animate-spin h-5 w-5 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Memproses...
+                                    </div>
+                                ) : "Pesan Motor"}
                             </button>
                         </form>
                     </div>
                 </div>
             </div>
+
+            {/* Modal Booking Success */}
+            {showModal && (
+                <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+                    <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+                        <h2 className="text-xl font-bold mb-4 text-green-600">Pemesanan Berhasil!</h2>
+                        {bookingSummary && (
+                            <div className="space-y-2 mb-4">
+                                <p>Durasi Sewa: {bookingSummary.durasi_sewa} hari</p>
+                                <p>Total Harga: Rp {bookingSummary.total_harga.toLocaleString()}</p>
+                            </div>
+                        )}
+                        <button
+                            onClick={() => setShowModal(false)}
+                            className="w-full bg-green-500 text-white py-2 rounded hover:bg-green-600 transition"
+                        >
+                            Tutup
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
